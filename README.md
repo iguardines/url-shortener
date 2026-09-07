@@ -102,3 +102,40 @@ reiniciar la aplicación elimina los enlaces. No hay autenticación; cualquiera 
 eliminar un enlace conociendo su código.
 
 Comprobación de estado: `GET /actuator/health`. Documentación OpenAPI: `GET /v3/api-docs`.
+
+## CD en Render
+
+El repositorio incluye `Dockerfile` y `render.yaml`. GitHub Actions verifica el código y Render despliega
+los nuevos commits de `master` cuando pasan los checks (`autoDeployTrigger: checksPass`). Los pull requests
+se prueban sin desplegarse al servicio principal. El primer despliegue al crear el servicio se inicia durante
+su configuración; comprobá que el CI esté verde antes de crearlo.
+
+1. Subí estos archivos a GitHub y esperá que **Java CI** termine correctamente.
+2. En Render elegí **New + → Blueprint**, conectá tu cuenta de GitHub y seleccioná este repositorio.
+3. Elegí la rama `master` y el archivo `render.yaml`. Revisá que la instancia sea **Free** y creá el servicio.
+4. En el servicio verificá **Settings → Auto-Deploy → After CI Checks Pass**.
+5. Esperá el estado **Live** en Render y abrí `/swagger-ui/index.html` en la URL pública del servicio.
+
+Si ya tenés este Web Service creado, configurá Docker, rama `master`, Dockerfile `./Dockerfile`,
+health check `/actuator/health`, variable `SERVER_FORWARD_HEADERS_STRATEGY=framework` y auto-deploy
+**After CI Checks Pass** en ese servicio, sin crear otro. Conectá el repositorio mediante la integración
+GitHub de Render; usar solamente una URL pública de Git no habilita este flujo automático.
+
+Render proporciona `PORT` y `RENDER_EXTERNAL_URL`: la aplicación los usa para escuchar en el puerto asignado
+y devolver enlaces públicos HTTPS. `BASE_URL` permite sobrescribir el origen si agregás un dominio propio.
+No hacen falta deploy hooks ni secretos de Render en GitHub. El resultado del CI se ve en GitHub Actions;
+el estado real del despliegue y los logs de arranque se ven en Render, en **Events** y **Logs**.
+
+El Dockerfile omite los tests durante el empaquetado porque se ejecutan antes en CI. Para probar la imagen local:
+
+```bash
+docker build -t url-shortener .
+docker run --rm -p 8080:8080 url-shortener
+```
+
+El plan del workspace Hobby es independiente del tipo de instancia. Este Blueprint solicita explícitamente
+una instancia Free. Los servicios Free se suspenden tras 15 minutos sin tráfico y pueden tardar en reactivarse.
+H2 pierde todos los enlaces en cada reinicio, suspensión o despliegue; es una demo de portfolio con datos temporales.
+
+Referencias: [despliegues](https://render.com/docs/deploys),
+[Blueprint](https://render.com/docs/blueprint-spec), [límites Free](https://render.com/docs/free).

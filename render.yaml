@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: url-shortener
+    runtime: docker
+    plan: free
+    branch: master
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeployTrigger: checksPass
+    healthCheckPath: /actuator/health
+    envVars:
+      - key: SERVER_FORWARD_HEADERS_STRATEGY
+        value: framework
