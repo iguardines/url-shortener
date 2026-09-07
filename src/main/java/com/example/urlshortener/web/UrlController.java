@@ -46,4 +46,10 @@ public class UrlController {
         service.delete(shortCode);
         return ResponseEntity.noContent().build();
     }
+
+    @Operation(summary = "This is just a mock method")
+    @GetMapping("/mock")
+    String get() {
+        return "this is a mock";
+    }
 }
