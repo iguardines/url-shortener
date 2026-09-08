@@ -14,6 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
 @SpringBootTest(properties = "spring.datasource.url=jdbc:h2:mem:collisiontest;DB_CLOSE_DELAY=-1")
+@org.springframework.test.context.ActiveProfiles("local")
 class CollisionIntegrationTest {
     @Autowired
     ShortUrlService service;

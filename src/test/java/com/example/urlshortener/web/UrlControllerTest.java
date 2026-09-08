@@ -18,6 +18,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(UrlController.class)
+@org.springframework.test.context.ActiveProfiles("local")
 class UrlControllerTest {
     @Autowired
     MockMvc mvc;

@@ -13,4 +13,4 @@ jobs:
           java-version: '21'
           cache: maven
       - name: Build and test
-        run: mvn --batch-mode verify
+        run: mvn --batch-mode verify -Ppostgres-tests

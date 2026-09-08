@@ -1,7 +1,6 @@
 # URL Shortener
 
-Proyecto independiente con Java 21, Spring Boot 3.5, Maven, Spring Data JPA y H2 en memoria. No requiere Docker,
-PostgreSQL ni Redis. Los datos se pierden al apagar la aplicación.
+Proyecto con Java 21, Spring Boot 3.5, Maven y Spring Data JPA. Usa H2 en memoria en local y PostgreSQL en producción. Flyway administra el esquema en ambos motores. La ejecución local no requiere Docker.
 
 ## Ejecutar
 
@@ -91,14 +90,13 @@ creación, redirección, conteo, eliminación y validaciones.
 - Contrato de caché con implementación vacía: todas las consultas se resuelven con H2.
 - Errores JSON consistentes, incluida una petición JSON malformada.
 
-La suite incluye 21 pruebas de dominio, servicio, controlador e integración. Una prueba provoca una violación real de
+La suite incluye pruebas de dominio, servicio, controlador e integración. Una prueba provoca una violación real de
 unicidad en H2 y verifica que el siguiente intento se persiste correctamente. GitHub Actions ejecuta `mvn verify` con
-Java 21 en cada push y pull request.
+Java 21 y PostgreSQL con Testcontainers en cada push y pull request.
 
 ## Alcance de la demo
 
-Esta API está pensada para mostrar diseño por capas, validación, persistencia y testing en un portfolio. H2 es volátil:
-reiniciar la aplicación elimina los enlaces. No hay autenticación; cualquiera con acceso a la API puede consultar o
+Esta API está pensada para mostrar diseño por capas, validación, persistencia y testing en un portfolio. En local, H2 es volátil: reiniciar la aplicación elimina los enlaces. En producción, PostgreSQL conserva los enlaces mientras se conserve la base. No hay autenticación; cualquiera con acceso a la API puede consultar o
 eliminar un enlace conociendo su código.
 
 Comprobación de estado: `GET /actuator/health`. Documentación OpenAPI: `GET /v3/api-docs`.
@@ -135,7 +133,50 @@ docker run --rm -p 8080:8080 url-shortener
 
 El plan del workspace Hobby es independiente del tipo de instancia. Este Blueprint solicita explícitamente
 una instancia Free. Los servicios Free se suspenden tras 15 minutos sin tráfico y pueden tardar en reactivarse.
-H2 pierde todos los enlaces en cada reinicio, suspensión o despliegue; es una demo de portfolio con datos temporales.
+Con el perfil prod, los enlaces permanecen en PostgreSQL después de reinicios y despliegues del Web Service. La disponibilidad y retención de la base dependen del proveedor y su plan.
 
 Referencias: [despliegues](https://render.com/docs/deploys),
 [Blueprint](https://render.com/docs/blueprint-spec), [límites Free](https://render.com/docs/free).
+
+## Perfiles y PostgreSQL
+
+- Sin variables adicionales se activa `local`: H2 en memoria.
+- `SPRING_PROFILES_ACTIVE=prod`: PostgreSQL, sin fallback a H2. Requiere `DB_URL`, `DB_USERNAME` y `DB_PASSWORD`, sin valores de respaldo.
+- Los tests H2 fijan explícitamente `local` para evitar usar una base real configurada en el entorno.
+- El repositorio y el adaptador JPA son compartidos por ambos motores.
+
+En Render → Web Service → Environment configurá:
+
+| Variable | Valor |
+| --- | --- |
+| `SPRING_PROFILES_ACTIVE` | `prod` |
+| `DB_URL` | `jdbc:postgresql://HOST:5432/BASE` |
+| `DB_USERNAME` | Usuario de la base |
+| `DB_PASSWORD` | Contraseña de la base |
+
+Usá las opciones SSL indicadas por tu proveedor en la URL JDBC. No pegues una URL `postgresql://` directamente:
+el driver requiere `jdbc:postgresql://`. Las credenciales se cargan por separado. No las subas al repositorio.
+Si usás Blueprint, `render.yaml` solicita URL, usuario y contraseña mediante `sync: false`; no crea una base de datos.
+Configurá las variables antes de desplegar este cambio en producción. Los enlaces existentes de H2 no se transfieren
+a PostgreSQL automáticamente.
+
+Flyway ejecuta `db/migration/V1__create_short_urls.sql` al arrancar sobre una base vacía. Hibernate usa `validate`,
+no `create-drop`, y Flyway tiene `clean` deshabilitado. Las siguientes modificaciones del esquema deben agregarse
+como nuevos archivos `V2__...sql`, sin editar migraciones ya aplicadas. Para una base con tablas previas, revisá su
+esquema antes de migrar; no actives un baseline automático para ocultar diferencias.
+
+Tests rápidos (sin Docker):
+
+```bash
+mvn verify
+```
+
+Suite completa con PostgreSQL temporal (requiere Docker activo):
+
+```bash
+mvn verify -Ppostgres-tests
+```
+
+El perfil Maven `postgres-tests` es distinto del perfil Spring `prod`. Failsafe ejecuta los tests `*IT` contra
+un contenedor aislado con credenciales de prueba, sin conectarse a tu base de Render. GitHub Actions ejecuta esta
+suite completa antes del despliegue.
