@@ -20,6 +20,8 @@ class ShortUrlServiceTest {
     RedirectCache cache;
     @Mock
     ShortCodeGenerator generator;
+    @Mock
+    ShortUrlEventPublisher events;
     private AutoCloseable mocks;
     private ShortUrlService service;
     private final Instant now = Instant.parse("2026-01-01T00:00:00Z");
@@ -27,7 +29,7 @@ class ShortUrlServiceTest {
     @BeforeEach
     void setUp() {
         mocks = MockitoAnnotations.openMocks(this);
-        service = new ShortUrlService(repository, cache, generator, Clock.fixed(now, ZoneOffset.UTC));
+        service = new ShortUrlService(repository, cache, generator, Clock.fixed(now, ZoneOffset.UTC), events);
     }
 
     @AfterEach
@@ -63,6 +65,7 @@ class ShortUrlServiceTest {
         when(repository.findByShortCode("code1234")).thenReturn(Optional.of(link));
         assertThat(service.resolve("code1234")).isEqualTo(link.originalUrl());
         verify(repository).incrementAccessCount("code1234");
+        verify(events).visited(link, now);
         verify(cache).put(eq("code1234"), eq(link.originalUrl()), eq(Duration.ofHours(24)));
     }
 
@@ -72,12 +75,31 @@ class ShortUrlServiceTest {
         when(repository.findByShortCode("expired1")).thenReturn(Optional.of(link("expired1", now)));
         assertThatThrownBy(() -> service.resolve("expired1")).isInstanceOf(ShortUrlExpiredException.class);
         verify(repository, never()).incrementAccessCount(any());
+        verifyNoInteractions(events);
     }
 
     @Test
     void rejectsMissingCode() {
         when(cache.get("missing1")).thenReturn(Optional.empty());
         assertThatThrownBy(() -> service.resolve("missing1")).isInstanceOf(ShortUrlNotFoundException.class);
+    }
+
+    @Test
+    void publishesPersistedIdentityOnCreation() {
+        ShortUrl saved = link("created1", null);
+        when(repository.save(any())).thenReturn(saved);
+        service.create(new CreateShortUrlCommand(saved.originalUrl(), "created1", null));
+        verify(events).created(saved);
+    }
+
+    @Test
+    void publishesVisitOnCacheHit() {
+        ShortUrl saved = link("cached12", null);
+        when(repository.findByShortCode("cached12")).thenReturn(Optional.of(saved));
+        when(cache.get("cached12")).thenReturn(Optional.of(saved.originalUrl()));
+        assertThat(service.resolve("cached12")).isEqualTo(saved.originalUrl());
+        verify(events).visited(saved, now);
+        verify(cache, never()).put(any(), any(), any());
     }
 
     private ShortUrl link(String code, Instant expires) {

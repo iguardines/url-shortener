@@ -180,3 +180,37 @@ mvn verify -Ppostgres-tests
 El perfil Maven `postgres-tests` es distinto del perfil Spring `prod`. Failsafe ejecuta los tests `*IT` contra
 un contenedor aislado con credenciales de prueba, sin conectarse a tu base de Render. GitHub Actions ejecuta esta
 suite completa antes del despliegue.
+
+
+## Eventos para Analytics
+
+El servicio independiente se encuentra en la carpeta hermana `../url-shortener-analytics`. No existe dependencia Maven entre ambos repositorios ni acceso cruzado a tablas. Este productor declara sus propios records bajo `infrastructure/kafka/event`.
+
+Publica `ShortUrlCreatedEvent` en `short-url-created.v1` después de persistir y `ShortUrlVisitedEvent` en `short-url-visited.v1` después del commit de la visita, incluso cuando hay cache hit. El redirect consulta identidad/expiración en DB también en cache hit; esta consulta adicional permite publicar el identificador correcto sin ampliar el contrato del cache.
+
+Payload JSON: `eventId` UUID aleatorio por hecho, `shortUrlId` UUID estable, `shortCode`, `occurredAt` ISO-8601 UTC; creación agrega `originalUrl`. La key Kafka es `shortUrlId`. El UUID se deriva del Long existente con `UUID.nameUUIDFromBytes(("url-shortener:" + id).getBytes(UTF_8))`; no cambia la PK ni la API. Si se unen varias instalaciones con secuencias de IDs independientes, usar un namespace distinto por productor. No reiniciar la secuencia de IDs conservando eventos históricos.
+
+Arranque local: levantar Kafka con el Compose del repositorio Analytics y ejecutar este Shortener normalmente. `KAFKA_EVENTS_ENABLED` vale `true` por defecto; usar `false` para operar sin Kafka. Tests existentes deshabilitan la integración externa explícitamente, y las pruebas del adaptador verifican JSON y publicación después del commit.
+
+Variables: `KAFKA_BOOTSTRAP_SERVERS` (default local `localhost:9092`), `KAFKA_TOPIC_CREATED`, `KAFKA_TOPIC_VISITED`. En perfil `prod` configurar además `KAFKA_USERNAME`, `KAFKA_PASSWORD`, `KAFKA_CA_CERTIFICATE` (contenido PEM con saltos de línea reales). Usa SASL_SSL + SCRAM-SHA-256 y verificación de hostname. Si una credencial contiene comillas o barras invertidas, configurar `SPRING_KAFKA_PROPERTIES_SASL_JAAS_CONFIG` como secreto con escape JAAS correcto. Crear topics previamente; este productor no administra el clúster.
+
+Publicación best effort: `acks=all` e idempotencia del productor no eliminan la ventana de pérdida entre commit SQL y envío Kafka. Los fallos se registran en logs sin revertir una operación ya confirmada. La espera por metadatos Kafka se limita a tres segundos; el envío asíncrono puede fallar después. Pendiente Transactional Outbox, replay operativo y backfill para enlaces anteriores a habilitar eventos. Solo se publican creación y visita; eliminación queda para una extensión posterior. No se considera garantía de entrega exactamente una vez ni implementación completamente production-ready.
+
+Para probar ambos servicios, con Analytics en `8081` y Shortener en `8080`:
+
+```bash
+curl -i -X POST http://localhost:8080/api/v1/urls -H 'Content-Type: application/json' -d '{"url":"https://example.com","customAlias":"demo1234"}'
+curl -i http://localhost:8080/demo1234
+curl -fsS http://localhost:8081/api/analytics/urls/demo1234
+```
+
+La estadística converge de forma asíncrona. Crear un alias nuevo si `demo1234` ya existe.
+
+
+### Ejecución dentro del stack de Analytics
+
+El Compose opcional `../url-shortener-analytics/docker-compose.stack.yml` agrega este servicio y su PostgreSQL persistente. Desde Analytics: `docker compose -p url-shortener-analytics -f docker-compose.yml -f docker-compose.stack.yml up --build -d`.
+
+El puerto del Shortener sigue siendo 8080. PostgreSQL se publica en 5434, base/usuario `shortener`, contraseña de desarrollo `shortener-local`. Las URLs previas en H2 no se migran automáticamente.
+
+`APP_EVENTS_ID_NAMESPACE` configura el prefijo para derivar UUID de eventos. Por defecto conserva `url-shortener`; la base nueva del stack usa `url-shortener-postgres-local` para evitar colisiones con datos históricos de H2. No cambiar el namespace de una base existente ni reutilizarlo para una base nueva que reinicie sus IDs si se conservan sus eventos históricos.

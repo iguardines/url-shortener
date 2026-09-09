@@ -22,12 +22,14 @@ public class ShortUrlService {
     private final RedirectCache cache;
     private final ShortCodeGenerator generator;
     private final Clock clock;
+    private final ShortUrlEventPublisher events;
 
-    public ShortUrlService(ShortUrlRepository repository, RedirectCache cache, ShortCodeGenerator generator, Clock clock) {
+    public ShortUrlService(ShortUrlRepository repository, RedirectCache cache, ShortCodeGenerator generator, Clock clock, ShortUrlEventPublisher events) {
         this.repository = repository;
         this.cache = cache;
         this.generator = generator;
         this.clock = clock;
+        this.events = events;
     }
 
     // Each insert has its own transaction so a collision does not poison the retry.
@@ -54,15 +56,13 @@ public class ShortUrlService {
 
     @Transactional
     public URI resolve(String code) {
-        var cached = cache.get(code);
-        if (cached.isPresent()) {
-            repository.incrementAccessCount(code);
-            return cached.get();
-        }
+        // The URL identity and expiry must also be known on a cache hit for analytics.
         ShortUrl link = getActive(code);
+        java.util.Optional<URI> cached = cache.get(code);
         repository.incrementAccessCount(code);
-        cache.put(code, link.originalUrl(), cacheTtl(link));
-        return link.originalUrl();
+        events.visited(link, clock.instant());
+        if (cached.isEmpty()) cache.put(code, link.originalUrl(), cacheTtl(link));
+        return cached.orElse(link.originalUrl());
     }
 
     @Transactional(readOnly = true)
@@ -90,6 +90,7 @@ public class ShortUrlService {
         try {
             ShortUrl saved = repository.save(new ShortUrl(null, code, c.originalUrl(), now, c.expiresAt(), 0));
             log.info("Created short URL code={} customAlias={} expires={}", code, !generated, c.expiresAt() != null);
+            events.created(saved);
             return saved;
         } catch (DataIntegrityViolationException ex) {
             if (!generated) throw new DuplicateShortCodeException(code);
